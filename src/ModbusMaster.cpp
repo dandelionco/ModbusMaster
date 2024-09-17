@@ -643,6 +643,19 @@ uint8_t ModbusMaster::readWriteMultipleRegisters(uint16_t u16ReadAddress,
 }
 
 
+uint8_t ModbusMaster::writeExecScript(const char *script) {
+	_scriptToExec = script;
+	return ModbusMasterTransaction(ku8MBWriteExecScript);
+}
+
+uint8_t ModbusMaster::readExecResult(String &dst) {
+	_strResponse = "";
+	uint8_t result = ModbusMasterTransaction(ku8MBReadExecResult);
+	dst = _strResponse;
+	return result;
+}
+
+
 /* _____PRIVATE FUNCTIONS____________________________________________________ */
 /**
 Modbus transaction engine.
@@ -657,7 +670,7 @@ Sequence:
 @param u8MBFunction Modbus function (0x01..0xFF)
 @return 0 on success; exception number on failure
 */
-uint8_t ModbusMaster::ModbusMasterTransaction(uint8_t u8MBFunction) {
+uint8_t ModbusMaster::ModbusMasterTransaction_helper(uint32_t u8MBFunction) {
 	uint8_t u8ModbusADU[256];
 	uint8_t u8ModbusADUSize = 0;
 	uint8_t i, u8Qty;
@@ -668,7 +681,26 @@ uint8_t ModbusMaster::ModbusMasterTransaction(uint8_t u8MBFunction) {
 	
 	// assemble Modbus Request Application Data Unit
 	u8ModbusADU[u8ModbusADUSize++] = _u8MBSlave;
-	u8ModbusADU[u8ModbusADUSize++] = u8MBFunction;
+	if( u8MBFunction < 256 ) {
+	    u8ModbusADU[u8ModbusADUSize++] = u8MBFunction;
+	}else{
+	    u8ModbusADU[u8ModbusADUSize++] = (u8MBFunction&0xFF000000)>>24;
+	    u8ModbusADU[u8ModbusADUSize++] = (u8MBFunction&0x00FF0000)>>16;
+	    u8ModbusADU[u8ModbusADUSize++] = (u8MBFunction&0x0000FF00)>>8;
+	    u8ModbusADU[u8ModbusADUSize++] = (u8MBFunction&0x000000FF);
+	}
+
+	if( u8MBFunction == ku8MBWriteExecScript ) {
+		uint32_t len = strlen(_scriptToExec);
+		const char *src = _scriptToExec;
+        u8ModbusADU[u8ModbusADUSize++] = (len&0xFF000000)>>24;
+        u8ModbusADU[u8ModbusADUSize++] = (len&0x00FF0000)>>16;
+        u8ModbusADU[u8ModbusADUSize++] = (len&0x0000FF00)>>8;
+        u8ModbusADU[u8ModbusADUSize++] = (len&0x000000FF);
+		for(i=0; i<len && u8ModbusADUSize < 256-2; i++) {
+            u8ModbusADU[u8ModbusADUSize++] = *src++;
+		}
+	}
   
 	switch(u8MBFunction) {
 		case ku8MBReadCoils:
@@ -761,15 +793,23 @@ uint8_t ModbusMaster::ModbusMasterTransaction(uint8_t u8MBFunction) {
 	if (MBUseEnablePin == 1) {  //Switch RS485 driver to transmitting mode.
 		digitalWrite(MBTXEnablePin, HIGH);  
 	}
+
+	// Drain the receive buffer
+	while(MBSerial.available()) {
+		MBSerial.read();
+	}
 	
 	if(MBDebugSerialPrint == 1) { // Print transmitted frame for Debugging purposes out on Serial
 		Serial.print("TX: ");
+	    for (i = 0; i < u8ModbusADUSize; i++) {
+			Serial.print(u8ModbusADU[i], HEX);
+			Serial.print(" ");
+		}
 	}
 	for (i = 0; i < u8ModbusADUSize; i++) {
 		MBSerial.write(u8ModbusADU[i]);
-		if(MBDebugSerialPrint == 1) { // Print trasnmitted frame for Debugging purposes out on Serial
-			Serial.print(u8ModbusADU[i], HEX);
-			Serial.print(" ");
+		if(MBSerial.available()) {
+			MBSerial.read();
 		}
 	}
 	if(MBDebugSerialPrint == 1) { // Print received frame for Debugging purposes out on Serial
@@ -780,6 +820,11 @@ uint8_t ModbusMaster::ModbusMasterTransaction(uint8_t u8MBFunction) {
 	u8ModbusADUSize = 0;
 	
 	MBSerial.flush(); //Wait for transmission to get completed
+
+	// Drain the receive buffer
+	while(MBSerial.available()) {
+		MBSerial.read();
+	}
 
 	if (MBUseEnablePin == 1) {  //Switch RS485 driver back to receiving mode.
 		digitalWrite(MBTXEnablePin, LOW);  
@@ -814,9 +859,19 @@ uint8_t ModbusMaster::ModbusMasterTransaction(uint8_t u8MBFunction) {
 			}
 		  
 			// verify response is for correct Modbus function code (mask exception bit 7)
-			if ((u8ModbusADU[1] & 0x7F) != u8MBFunction) {
-				u8MBStatus = ku8MBInvalidFunction;
-				break;
+			if ((u8ModbusADU[1] & 0x7F) != 0x6E) {
+				if ((u8ModbusADU[1] & 0x7F) != u8MBFunction) {
+					u8MBStatus = ku8MBInvalidFunction;
+					break;
+				}
+			}else{
+				if ((u8ModbusADU[1] & 0x7F) != ((u8MBFunction & 0xFF000000)>>24) ||
+				    u8ModbusADU[2] != ((u8MBFunction & 0x00FF0000)>>16) || 
+					u8ModbusADU[3] != ((u8MBFunction & 0x0000FF00)>>8) || 
+					u8ModbusADU[4] != ((u8MBFunction & 0x000000FF))) {
+					u8MBStatus = ku8MBInvalidFunction;
+					break;
+				}
 			}
 		  
 			// check whether Modbus exception occurred; return Modbus Exception Code
@@ -845,10 +900,21 @@ uint8_t ModbusMaster::ModbusMasterTransaction(uint8_t u8MBFunction) {
 				case ku8MBMaskWriteRegister:
 					u8BytesLeft = 5;
 					break;
+				
+				case 0x6E:
+				    u8BytesLeft = 4;
 			}
+		}
+		if (u8ModbusADUSize == 9 && u8ModbusADU[1] == 0x6E) {
+            u8BytesLeft = ((u8ModbusADU[5]<<24) | (u8ModbusADU[6]<<16) | (u8ModbusADU[7]<<8) | (u8ModbusADU[8])) + 2;
 		}
 		if (millis() > (u32StartTime + ku8MBResponseTimeout)) {
 			u8MBStatus = ku8MBResponseTimedOut;
+			/*Serial.printf("Timed out: %u %02x\n", u8ModbusADUSize, u8ModbusADU[1]);
+			for(int i=0; i<u8ModbusADUSize; i++) {
+				Serial.printf("%02x ", u8ModbusADU[i]);
+			}
+			Serial.printf("\n");*/
 		}
 	}
 	
@@ -867,13 +933,19 @@ uint8_t ModbusMaster::ModbusMasterTransaction(uint8_t u8MBFunction) {
 		if (!u8MBStatus && (lowByte(u16CRC) != u8ModbusADU[u8ModbusADUSize - 2] ||
 		highByte(u16CRC) != u8ModbusADU[u8ModbusADUSize - 1])) {
 			u8MBStatus = ku8MBInvalidCRC;
+			/*Serial.print("BADCRC: ");
+	        for (i = 0; i < u8ModbusADUSize; i++) {
+			    Serial.print(u8ModbusADU[i], HEX);
+			    Serial.print(" ");
+		    }*/
 		}
 	}
 
 	// disassemble ADU into words
 	if (!u8MBStatus) {
 		// evaluate returned Modbus function code
-		switch(u8ModbusADU[1]) {
+		//switch(u8ModbusADU[1]) {
+		switch(u8MBFunction) {
 			case ku8MBReadCoils:
 			case ku8MBReadDiscreteInputs:
 				// load bytes into word; response bytes are ordered L, H, L, H, ...
@@ -904,11 +976,38 @@ uint8_t ModbusMaster::ModbusMasterTransaction(uint8_t u8MBFunction) {
 					_u8ResponseBufferLength = i;
 				}
 				break;
+			case ku8MBReadExecResult:
+			    String r = String((const char*)&u8ModbusADU[9], u8ModbusADUSize-2-9);
+				_strResponse += r;
+			    break;
 		}
 	}
   
 	_u8TransmitBufferIndex = 0;
 	u16TransmitBufferLength = 0;
 	_u8ResponseBufferIndex = 0;
+	//if(u8MBStatus == ku8MBSuccess) {
+	//	Serial.print("Good\n");
+	//}else{
+	//	Serial.print(u8MBStatus);
+	//}
 	return u8MBStatus;
+}
+
+uint8_t ModbusMaster::ModbusMasterTransaction(uint32_t u8MBFunction) {
+	uint8_t result;
+	int tries;
+	for(tries = 0; tries < 3; tries++) {
+		result = this->ModbusMasterTransaction_helper(u8MBFunction);
+		if(result != ku8MBResponseTimedOut && result != ku8MBInvalidCRC) {
+			break;
+		}
+		//delay(50);
+		delay(10);
+	}
+	/*if(result != ku8MBSuccess && result != ku8MBIllegalDataAddress) {
+		Serial.print(result);
+		Serial.print("\n");
+	}*/
+	return result;
 }

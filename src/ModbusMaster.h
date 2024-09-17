@@ -37,6 +37,7 @@ Arduino library for communicating with Modbus slaves over RS232/485 (via RTU pro
 #define ModbusMaster_h
 
 #include "application.h"
+#include <string>
 
 
 /* _____UTILITY MACROS_______________________________________________________ */
@@ -236,6 +237,8 @@ public:
 	uint8_t  maskWriteRegister(uint16_t, uint16_t, uint16_t);
 	uint8_t  readWriteMultipleRegisters(uint16_t, uint16_t, uint16_t, uint16_t);
 	uint8_t  readWriteMultipleRegisters(uint16_t, uint16_t);
+	uint8_t  writeExecScript(const char *);
+	uint8_t  readExecResult(String &);
 	
 private:
 	uint8_t  _u8SerialPort;									  ///< serial port (0..3) initialized in constructor
@@ -254,6 +257,8 @@ private:
 	uint16_t* rxBuffer; // from Wire.h -- need to clean this up Rx
 	uint8_t _u8ResponseBufferIndex;
 	uint8_t _u8ResponseBufferLength;
+	const char *_scriptToExec;
+	String _strResponse;
 	
 	// Modbus function codes for bit access
 	static const uint8_t ku8MBReadCoils				  = 0x01; ///< Modbus function 0x01 Read Coils
@@ -268,12 +273,17 @@ private:
 	static const uint8_t ku8MBWriteMultipleRegisters	 = 0x10; ///< Modbus function 0x10 Write Multiple Registers
 	static const uint8_t ku8MBMaskWriteRegister		  = 0x16; ///< Modbus function 0x16 Mask Write Register
 	static const uint8_t ku8MBReadWriteMultipleRegisters = 0x17; ///< Modbus function 0x17 Read Write Multiple Registers
+
+	// Custom modbus functions
+	static const uint32_t ku8MBWriteExecScript            = 0x6E00000E;
+	static const uint32_t ku8MBReadExecResult             = 0x6E00000F;
 	
 	// Modbus timeout [milliseconds]
 	static const uint8_t ku8MBResponseTimeout			= 200;  ///< Modbus timeout [milliseconds]
 	
 	// master function that conducts Modbus transactions
-	uint8_t ModbusMasterTransaction(uint8_t u8MBFunction);
+	uint8_t ModbusMasterTransaction_helper(uint32_t u8MBFunction);
+	uint8_t ModbusMasterTransaction(uint32_t u8MBFunction);
 	
 	// idle callback function; gets called during idle time between TX and RX
 	void (*_idle)();
