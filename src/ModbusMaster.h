@@ -79,6 +79,9 @@ Macro to generate 32-bit integer from (2) 16-bit words.
 
 
 /* _____CLASS DEFINITIONS____________________________________________________ */
+
+typedef void (*TXEnableFunc_t)(bool enabled);
+
 /**
 Arduino class library for communicating with Modbus slaves over 
 RS232/485 (via RTU protocol).
@@ -223,6 +226,7 @@ public:
 	void disableDebug();
 	void enableTXpin(uint8_t);
 	void disableTXpin();
+	void setTXEnableFunc(TXEnableFunc_t func);
 	
 	uint8_t  readCoils(uint16_t, uint16_t);
 	uint8_t  readDiscreteInputs(uint16_t, uint16_t);

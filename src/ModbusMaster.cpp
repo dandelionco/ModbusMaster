@@ -36,6 +36,7 @@ USARTSerial MBSerial = Serial1;		 ///< Pointer to Serial1 class object
 uint8_t MBTXEnablePin = D7;			 ///< GPIO pin used for toggling RS485 Driver IC's TX Enable pin, default is D7
 uint8_t MBUseEnablePin = 0;			 ///< Should a TX_ENABLE pin be used? 0 = No, 1 = Yes
 uint8_t MBDebugSerialPrint = 0;		 ///< Do you want the TX and RX fraimes printed out on Serial for debugging? 0 = No, 1 = Yes
+TXEnableFunc_t MBTXEnableFunc = NULL; // Pointer to a function to enable/disable transmitting
 
 
 
@@ -203,6 +204,16 @@ Does opposite of what enableTXpin() does
 */
 void ModbusMaster::disableTXpin() {
 	MBUseEnablePin = 0; 
+}
+
+
+/**
+Enable and set a TX Enable function required by some RS485 Drivers to switch from receiving to transmitting mode
+
+@ingroup setup
+*/
+void ModbusMaster::setTXEnableFunc(TXEnableFunc_t func) {
+	MBTXEnableFunc = func;
 }
 	
 
@@ -793,6 +804,9 @@ uint8_t ModbusMaster::ModbusMasterTransaction_helper(uint32_t u8MBFunction) {
 	if (MBUseEnablePin == 1) {  //Switch RS485 driver to transmitting mode.
 		digitalWrite(MBTXEnablePin, HIGH);  
 	}
+    if (MBTXEnableFunc) {
+		MBTXEnableFunc(true);
+	}
 
 	// Drain the receive buffer
 	while(MBSerial.available()) {
@@ -828,6 +842,9 @@ uint8_t ModbusMaster::ModbusMasterTransaction_helper(uint32_t u8MBFunction) {
 
 	if (MBUseEnablePin == 1) {  //Switch RS485 driver back to receiving mode.
 		digitalWrite(MBTXEnablePin, LOW);  
+	}
+    if(MBTXEnableFunc) {
+		MBTXEnableFunc(false);
 	}
 	
 	// loop until we run out of time or bytes, or an error occurs
